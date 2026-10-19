@@ -3,6 +3,8 @@ on:
   push:
     tags: ['v*']
   workflow_dispatch:
+permissions:
+  contents: read
 jobs:
   windows-msi:
     runs-on: windows-latest
@@ -10,6 +12,8 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - run: cargo test --all
       - run: cargo build --release
       - run: target/release/questlog.exe . --no-anim
@@ -22,9 +26,9 @@ jobs:
           path: |
             questlog-x64.msi
             target/release/questlog.exe
-      - uses: softprops/action-gh-release@v2
+      - name: publish release (GitHub CLI, no third-party action)
         if: startsWith(github.ref, 'refs/tags/')
-        with:
-          files: |
-            questlog-x64.msi
-            target/release/questlog.exe
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" questlog-x64.msi target/release/questlog.exe --repo "$GITHUB_REPOSITORY" --generate-notes

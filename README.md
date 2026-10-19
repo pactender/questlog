@@ -149,6 +149,13 @@ installer/questlog.wxs      MSI definition
 assets/                     logo, banner, rank ladder, example cards
 ```
 
+## Privacy
+
+- Runs entirely on your machine. **No network access, no telemetry, no accounts, no data sharing.**
+- Reads only git-tracked files and commit timestamps and subjects. Author names and emails are never read.
+- Writes nothing unless you pass `--svg`. The card holds only the folder name and scores.
+- Details and how to report a vulnerability: [SECURITY.md](SECURITY.md).
+
 ## Limits
 
 - Heuristics, not truth. A high score means a repo looks maintained; it says nothing about code quality.
