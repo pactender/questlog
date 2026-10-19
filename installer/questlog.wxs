@@ -1,5 +1,5 @@
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs" xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui">
-  <Package Name="questlog" Manufacturer="ProportanilityConstant" Version="0.1.0"
+  <Package Name="questlog" Manufacturer="ProportanilityConstant" Version="0.1.1"
            UpgradeCode="6f1c2d0e-4b7a-4a43-9d0e-3b9c2f6a1e55" Scope="perMachine">
     <MajorUpgrade DowngradeErrorMessage="A newer version of questlog is already installed." />
     <MediaTemplate EmbedCab="yes" />
