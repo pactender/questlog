@@ -1,102 +1,115 @@
 <p align="center">
-  <img src="assets/banner.png" alt="questlog: audit your repo like a recruiter would" width="100%">
+  <img src="assets/logo.svg" alt="questlog logo" width="420">
 </p>
 
 <p align="center">
-  <a href="https://github.com/ProportanilityConstant/questlog/actions/workflows/ci.yml"><img src="https://github.com/ProportanilityConstant/questlog/actions/workflows/ci.yml/badge.svg" alt="ci"></a>
-  <img src="https://img.shields.io/badge/rust-std--only-orange" alt="rust, std only">
-  <img src="https://img.shields.io/badge/dependencies-0-brightgreen" alt="zero dependencies">
-  <img src="https://img.shields.io/badge/platform-windows%20%7C%20macos%20%7C%20linux-blue" alt="platforms">
-  <img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT">
+  <img src="assets/banner.png" alt="questlog — audit your repository like a reviewer would" width="100%">
 </p>
 
 <p align="center">
-  <b>questlog</b> audits a git repository the way a reviewer skims it, then shows the result as a pixel-RPG character sheet with a fix list ranked by score gain.<br>
-  One command. Offline. No dependencies.
+  <a href="https://github.com/pactender/questlog/actions/workflows/ci.yml"><img src="https://github.com/pactender/questlog/actions/workflows/ci.yml/badge.svg" alt="CI status"></a>
+  <img src="https://img.shields.io/badge/Rust-std--only-orange?logo=rust" alt="Rust, standard library only">
+  <img src="https://img.shields.io/badge/dependencies-0-2ea44f" alt="Zero dependencies">
+  <img src="https://img.shields.io/badge/platforms-Windows%20%7C%20macOS%20%7C%20Linux-59636e" alt="Windows, macOS, Linux">
+  <img src="https://img.shields.io/badge/license-MIT-2563eb" alt="MIT license">
 </p>
 
 <p align="center">
-  <a href="#install">Install</a> ·
-  <a href="#usage">Usage</a> ·
+  <strong>Repository quality, turned into a quest log.</strong><br>
+  A fast, offline CLI that audits the signals reviewers notice first, then turns the results into a pixel-RPG character sheet and a ranked fix list.
+</p>
+
+<p align="center">
+  <a href="#quick-start">Quick start</a> ·
   <a href="#what-it-checks">Checks</a> ·
   <a href="#how-it-works">How it works</a> ·
   <a href="#built-with">Built with</a> ·
-  <a href="#limits">Limits</a>
+  <a href="#privacy">Privacy</a>
 </p>
 
----
+## Why questlog?
 
-## Why
+A repository is often judged before anyone reads the implementation. Reviewers look for the same visible signals: a clear README, working tests, CI, a license, sensible history, clean repository hygiene, and evidence that the project is maintained.
 
-A hiring manager or maintainer decides in seconds whether a repo is worth opening. The signals are predictable: a real README, tests that run in CI, a license, readable commit messages, no leaked secrets, a tagged release. Most portfolio repos miss several of them and never find out why they get skipped.
-
-questlog checks those signals and tells you what to fix first.
+`questlog` measures those signals locally and tells you what to improve next. It is deliberately opinionated, transparent, and small enough to understand in one sitting.
 
 ## What you get
 
-| | |
-|---|---|
-| **Character sheet** | Six stat bars (docs, tests, hygiene, history, security, polish), an overall score, a level, and a rank. The pixel avatar upgrades with your rank. |
-| **Ranked quests** | Every failed check, sorted by score gain. The top line is the best use of your next hour. |
-| **Shareable card** | `--svg card.svg` writes a card for your profile README. |
-| **CI gate** | `--min-score 70` exits non-zero below your threshold. |
-| **Private by design** | Reads only git-tracked files, offline. Nothing is uploaded. |
+| Feature | What it does |
+| --- | --- |
+| **Character sheet** | Shows six category scores, an overall score, level, rank, and a pixel avatar that evolves with the result. |
+| **Ranked quests** | Turns failed checks into an ordered backlog, prioritised by potential score gain. |
+| **Shareable SVG card** | Writes a self-contained card you can add to a profile README, project page, or release note. |
+| **CI quality gate** | Exits non-zero below a threshold such as `--min-score 70`. |
+| **Offline by design** | Reads local repository files and Git history only. No telemetry, account, server, or upload. |
 
 <p align="center">
-  <img src="assets/example-card-weak.png" alt="a low-ranked repo card" width="48%">
-  <img src="assets/example-card.png" alt="a legend-ranked repo card" width="48%">
+  <img src="assets/example-card-weak.png" alt="Example questlog card with a low score" width="48%">
+  <img src="assets/example-card.png" alt="Example questlog card with a legend score" width="48%">
 </p>
 
 ### The rank ladder
 
-<p align="center"><img src="assets/ranks.png" alt="Wanderer to Legend rank ladder" width="100%"></p>
+<p align="center"><img src="assets/ranks.png" alt="Questlog rank ladder from Wanderer to Legend" width="100%"></p>
 
-## Install
+## Quick start
 
-- **Windows:** download `questlog-x64.msi` from the latest [Release](../../releases). It installs to Program Files, adds questlog to PATH (open a new terminal), and adds a Start menu entry.
-- **Any OS:** install [Rust](https://rustup.rs), then run `cargo install --path .` in this folder.
-- **Requires:** `git` on PATH, and a terminal with ANSI color (Windows Terminal, iTerm2, GNOME Terminal, and similar).
+### Install from source
 
-## Usage
+Install [Rust](https://rustup.rs), clone the project, and install the binary:
 
-```
-questlog                          # audit the repo in the current folder
-questlog ../other-project         # audit another folder
-questlog --svg card.svg           # also write a shareable SVG card
-questlog --min-score 70           # exit code 1 if the score is below 70
-questlog --no-anim --version      # plain output / print version
+```bash
+git clone https://github.com/pactender/questlog.git
+cd questlog
+cargo install --path .
 ```
 
-Typical loop: run it, fix the top quest, commit, run it again.
+### Run an audit
 
-Add the card to your README:
+```bash
+questlog                         # audit the current repository
+questlog ../other-project        # audit another repository
+questlog --no-anim               # plain output for logs and CI
+questlog --svg card.svg          # write a shareable SVG card
+questlog --min-score 70          # fail when the score is below 70
+questlog --version               # print the installed version
+```
+
+A practical loop is simple: run `questlog`, complete the highest-value quest, commit the improvement, and run it again.
+
+Add a generated card to your README with:
 
 ```markdown
-![questlog](card.svg)
+![Repository score](card.svg)
 ```
 
-Use it as a CI gate (GitHub Actions):
+### Use it in GitHub Actions
 
 ```yaml
 - uses: actions/checkout@v4
   with:
     fetch-depth: 0
-- run: cargo install --git https://github.com/ProportanilityConstant/questlog
+
+- run: cargo install --git https://github.com/pactender/questlog
 - run: questlog . --no-anim --min-score 70
 ```
 
+For Windows users, the tagged release workflow also builds a native MSI installer.
+
 ## What it checks
 
-27 checks in 6 categories. Each category totals 100 points; the overall score is the average.
+`questlog` currently evaluates 27 checks across six categories. Each category is scored out of 100; the overall score is their average.
 
-| Category | Checks (points) |
-|---|---|
-| **DOCS** | README exists (30) · 1500+ characters (20) · 3+ headings (15) · code block (15) · screenshot (10) · install/usage section (10) |
-| **TESTS** | tests exist (40) · 3+ test files (20) · tests run in CI (40) |
-| **HYGIENE** | LICENSE (25) · .gitignore (20) · dependency manifest (15) · no tracked build output or `.env` (25) · no file over 5 MB (15) |
-| **HISTORY** | under git (20) · 10+ commits (20) · 30+ commits (10) · spans 2+ weeks (20) · descriptive messages (30) |
-| **SECURITY** | no private key (40) · no AWS or GitHub token pattern (40) · `.env` untracked (20) |
-| **POLISH** | CI present (30) · CHANGELOG or CONTRIBUTING (15) · badges (15) · visual assets (15) · release tag (25) |
+| Category | Signals |
+| --- | --- |
+| **DOCS** | README presence and depth, headings, code examples, screenshots, and install/usage guidance |
+| **TESTS** | Test files, broader test coverage, and tests running in CI |
+| **HYGIENE** | License, ignore rules, dependency manifest, tracked build output, secrets files, and oversized files |
+| **HISTORY** | Git history, commit count, descriptive messages, and history spanning multiple weeks |
+| **SECURITY** | Private-key blocks, common AWS/GitHub token patterns, and tracked `.env` files |
+| **POLISH** | CI, project guidance, badges, visual assets, and release tags |
+
+These are useful repository heuristics, not a judgement of code quality or hiring potential. The checks are intentionally visible in `src/main.rs` so the scoring is easy to inspect and discuss.
 
 ## How it works
 
@@ -104,68 +117,56 @@ Use it as a CI gate (GitHub Actions):
 flowchart LR
   A[git ls-files] --> C[27 checks]
   B[git log] --> C
-  C --> D[6 category scores]
-  D --> E[level + rank]
-  D --> F[ranked quests]
-  E --> G[terminal sheet]
-  E --> H[SVG card]
-  D --> I[exit-code gate]
+  C --> D[Six category scores]
+  D --> E[Level and rank]
+  D --> F[Ranked quests]
+  E --> G[Terminal character sheet]
+  E --> H[Shareable SVG card]
+  D --> I[CI exit-code gate]
 ```
 
-Sample plain output:
-
-```
-LV 10  LEGEND
-
-DOCS     ████████████████████ 100
-TESTS    ████████████████████ 100
-HYGIENE  ████████████████████ 100
-HISTORY  ██████████████████░░  90
-SECURITY ████████████████████ 100
-POLISH   ████████████████████ 100
-
-OVERALL  98/100
-
-QUESTS  (ranked by score gain)
-  +2  XP  [HISTORY] Keep committing in small steps: 30+ commits
-```
+The audit engine reads tracked files, selected file contents, and commit timestamps and subjects. It skips symlinks and common build/cache directories. The terminal renderer and SVG writer use the same score model, so the visual output always reflects the audit result.
 
 ## Built with
 
-| | |
-|---|---|
-| **Rust** | The whole tool: audit engine, terminal renderer, SVG writer. About 260 lines, `std` only, zero crates. |
-| **WiX Toolset 5** | Windows MSI installer (`installer/`). |
-| **GitHub Actions** | CI on Linux, Windows, and macOS; MSI build on release tags. |
-| **SVG** | Card and logo output, drawn as pixel rectangles (no fonts needed). |
+| Layer | Technology | Role |
+| --- | --- | --- |
+| **Core application** | Rust 2021 | Audit engine, CLI parsing, terminal renderer, and SVG generation |
+| **Runtime** | Rust standard library | No third-party runtime dependencies; fast builds and a small attack surface |
+| **Windows packaging** | WiX Toolset 5 | Native `.msi` installer built on release tags |
+| **Automation** | GitHub Actions | Cross-platform tests, release builds, and the self-audit quality gate |
+| **Visual system** | SVG + pixel art PNG assets | Logo, social preview, rank ladder, and score-card examples |
+| **Project docs** | Markdown + Mermaid | Product overview, architecture, contribution, and security guidance |
 
-Design choices: no dependencies, so it builds anywhere in seconds and has nothing to audit. Truecolor ANSI and Unicode half-blocks for the terminal art. Windows console is switched to UTF-8 and VT mode at startup.
+The implementation is intentionally dependency-free. The repository is primarily Rust, with SVG, PNG, YAML, Markdown, and WiX installer definitions supporting the distribution experience.
 
-```
-src/main.rs                 audit engine, renderer, CLI
-build.rs                    embeds the Windows icon and version info
-installer/questlog.wxs      MSI definition
-.github/workflows/          ci.yml, release.yml
-assets/                     logo, banner, rank ladder, example cards
+## Repository layout
+
+```text
+src/main.rs                 audit engine, CLI, terminal renderer, SVG writer
+build.rs                    Windows version and icon metadata
+installer/questlog.wxs      WiX installer definition
+.github/workflows/          CI and tagged-release workflows
+.github/ISSUE_TEMPLATE/     Structured issue forms
+assets/                     Logo, banner, social preview, cards, rank ladder
+CONTRIBUTING.md             Contribution expectations
+SECURITY.md                 Privacy model and vulnerability reporting
 ```
 
 ## Privacy
 
-- Runs entirely on your machine. **No network access, no telemetry, no accounts, no data sharing.**
-- Reads only git-tracked files and commit timestamps and subjects. Author names and emails are never read.
-- Writes nothing unless you pass `--svg`. The card holds only the folder name and scores.
-- Details and how to report a vulnerability: [SECURITY.md](SECURITY.md).
+- Runs entirely on your machine: **no network access, telemetry, accounts, or data sharing**.
+- Reads only Git-tracked files plus commit timestamps and subjects.
+- Never reads commit author names or email addresses.
+- Writes nothing unless `--svg <file>` is supplied.
+- Never follows symlinks outside the repository.
+- The generated SVG contains only a sanitized folder name and scores.
 
-## Limits
-
-- Heuristics, not truth. A high score means a repo looks maintained; it says nothing about code quality.
-- Secret detection covers private-key blocks, AWS key IDs, and GitHub tokens only. Use a dedicated scanner for real security audits.
-- History checks need real history. Backdating commits is easy to spot and defeats the point.
-- The checks reflect one author's view of what reviewers look for and are not validated against hiring outcomes.
+Read [SECURITY.md](SECURITY.md) for the complete data-handling model and private vulnerability-reporting path.
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md). New checks must keep each category at 100 points; a unit test enforces it.
+Contributions are welcome when they keep the tool understandable and the scoring model defensible. Start with [CONTRIBUTING.md](CONTRIBUTING.md), run the test suite, and explain why a new check is a signal a reviewer would reasonably care about.
 
 ## License
 
