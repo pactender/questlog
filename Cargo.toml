@@ -1,0 +1,17 @@
+[package]
+name = "questlog"
+version = "0.1.0"
+edition = "2021"
+description = "Audit a git repo like a recruiter would, and see it as a pixel-RPG character sheet with a ranked fix list"
+license = "MIT"
+repository = "https://github.com/ProportanilityConstant/questlog"
+readme = "README.md"
+keywords = ["git", "audit", "cli", "portfolio", "pixel-art"]
+categories = ["command-line-utilities", "development-tools"]
+
+[dependencies]
+
+[profile.release]
+opt-level = 3
+lto = true
+strip = true
