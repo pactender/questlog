@@ -1,4 +1,8 @@
+* text=auto
+Cargo.lock -diff
 installer/** linguist-vendored
 assets/windows/** linguist-vendored
 *.svg linguist-generated
 *.rtf linguist-documentation
+*.png binary
+*.ico binary
