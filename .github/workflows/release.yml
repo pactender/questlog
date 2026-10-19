@@ -14,21 +14,46 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-      - run: cargo test --all
-      - run: cargo build --release
+      - name: Test and build
+        run: |
+          cargo test --locked --all
+          cargo build --locked --release
       - run: target/release/questlog.exe . --no-anim
       - run: dotnet tool install --global wix --version 5.0.2
       - run: wix extension add -g WixToolset.UI.wixext/5.0.2
-      - run: wix build installer/questlog.wxs -ext WixToolset.UI.wixext -arch x64 -d ExePath=target/release/questlog.exe -o questlog-x64.msi
+      - name: Build and validate MSI
+        shell: pwsh
+        run: |
+          $version = $env:GITHUB_REF_NAME.TrimStart('v')
+          if ($version -notmatch '^\d+\.\d+\.\d+(\.\d+)?$') {
+            $version = (Select-String -Path Cargo.toml -Pattern '^version\s*=\s*"([^"]+)"').Matches[0].Groups[1].Value
+          }
+          wix build installer/questlog.wxs `
+            -ext WixToolset.UI.wixext `
+            -arch x64 `
+            -d ExePath=target/release/questlog.exe `
+            -d ProductVersion=$version `
+            -o questlog-x64.msi
+          if (!(Test-Path questlog-x64.msi) -or ((Get-Item questlog-x64.msi).Length -lt 10000)) {
+            throw 'MSI was not created or is unexpectedly small.'
+          }
+          wix msi validate questlog-x64.msi
+          Get-FileHash questlog-x64.msi -Algorithm SHA256 | ForEach-Object { "$($_.Hash.ToLower())  questlog-x64.msi" } | Set-Content checksums-sha256.txt
       - uses: actions/upload-artifact@v4
         with:
           name: questlog-windows
           path: |
             questlog-x64.msi
             target/release/questlog.exe
+            checksums-sha256.txt
       - name: publish release (GitHub CLI, no third-party action)
         if: startsWith(github.ref, 'refs/tags/')
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" questlog-x64.msi target/release/questlog.exe --repo "$GITHUB_REPOSITORY" --generate-notes
+        run: |
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" questlog-x64.msi target/release/questlog.exe checksums-sha256.txt --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" questlog-x64.msi target/release/questlog.exe checksums-sha256.txt --repo "$GITHUB_REPOSITORY" --generate-notes --title "questlog $GITHUB_REF_NAME"
+          fi

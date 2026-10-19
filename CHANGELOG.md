@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.2
+- Fix: Windows MSI asset paths now resolve correctly from the repository root.
+- Packaging: release builds derive the MSI version from the tag, validate the MSI, publish SHA-256 checksums, and safely replace assets on retry.
+- Metadata: repository URLs and package metadata now point to `pactender/questlog`.
+
 ## 0.1.1
 - Fix: `--min-score abc` silently passed the gate; invalid and unknown options now exit with an error.
 - Fix: files like `latest.md` or `inspect.rs` were counted as tests; detection now uses real test paths and markers.

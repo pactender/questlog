@@ -1,10 +1,10 @@
 [package]
 name = "questlog"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
 description = "Audit a git repo like a recruiter would, and see it as a pixel-RPG character sheet with a ranked fix list"
 license = "MIT"
-repository = "https://github.com/ProportanilityConstant/questlog"
+repository = "https://github.com/pactender/questlog"
 readme = "README.md"
 keywords = ["git", "audit", "cli", "portfolio", "pixel-art"]
 categories = ["command-line-utilities", "development-tools"]
