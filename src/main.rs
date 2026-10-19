@@ -15,20 +15,26 @@ const SPRITE: [&str; 12] = [
     ".CCAAAAAACC.", ".CCAAAAAACC.", "..SAAAAAAS..", "...AA..AA...", "...AA..AA...", "...BB..BB...",
 ];
 
-struct Check { cat: usize, pts: u32, ok: bool, fix: &'static str }
+struct Check { cat: usize, pts: u32, ok: bool, fix: String }
 
 fn git(dir: &Path, args: &[&str]) -> Option<String> {
     let o = Command::new("git").arg("-c").arg("core.quotepath=off").arg("-C").arg(dir).args(args).output().ok()?;
     o.status.success().then(|| String::from_utf8_lossy(&o.stdout).into_owned())
 }
 
-fn walk(root: &Path, dir: &Path, out: &mut Vec<String>) {
+/// Lists regular files only. Symlinks are never followed, so a link can't pull in files from outside the folder.
+fn walk(root: &Path, dir: &Path, out: &mut Vec<String>, depth: u32) {
+    if depth > 40 { return; }
     let Ok(rd) = fs::read_dir(dir) else { return };
     for e in rd.flatten() {
+        let Ok(ft) = e.file_type() else { continue };
+        if ft.is_symlink() { continue; }
         let (p, n) = (e.path(), e.file_name().to_string_lossy().into_owned());
-        if p.is_dir() {
-            if !matches!(n.as_str(), ".git" | "target" | "node_modules" | ".venv" | "__pycache__") { walk(root, &p, out); }
-        } else if let Ok(r) = p.strip_prefix(root) { out.push(r.to_string_lossy().replace('\\', "/")); }
+        if ft.is_dir() {
+            if !matches!(n.as_str(), ".git" | "target" | "node_modules" | ".venv" | "__pycache__") { walk(root, &p, out, depth + 1); }
+        } else if ft.is_file() {
+            if let Ok(r) = p.strip_prefix(root) { out.push(r.to_string_lossy().replace('\\', "/")); }
+        }
     }
 }
 
@@ -36,37 +42,64 @@ fn after(s: &str, pre: &str, n: usize, f: fn(char) -> bool) -> bool {
     s.match_indices(pre).any(|(i, _)| { let t: Vec<char> = s[i + pre.len()..].chars().take(n).collect(); t.len() == n && t.iter().all(|&c| f(c)) })
 }
 
-fn audit(root: &Path) -> (Vec<Check>, bool) {
-    let is_git = git(root, &["rev-parse", "--is-inside-work-tree"]).map_or(false, |s| s.trim() == "true");
+fn is_test_path(p: &str) -> bool {
+    let parts: Vec<&str> = p.split('/').collect();
+    let name = parts[parts.len() - 1];
+    parts[..parts.len() - 1].iter().any(|d| matches!(*d, "test" | "tests" | "__tests__" | "spec" | "specs" | "e2e"))
+        || name.starts_with("test_") || name.contains("_test.") || name.contains(".test.") || name.contains(".spec.")
+}
+
+fn runs_tests(t: &str) -> bool {
+    let t = t.to_lowercase();
+    ["cargo test", "cargo nextest", "npm test", "npm run test", "yarn test", "pnpm test", "pytest", "go test", "mvn test", "mvn verify",
+     "gradle test", "gradlew test", "dotnet test", "ctest", "make test", "unittest", "rspec", "phpunit"].iter().any(|k| t.contains(k))
+}
+
+fn audit(root: &Path) -> (Vec<Check>, bool, bool) {
+    let probe = Command::new("git").arg("-C").arg(root).args(["rev-parse", "--is-inside-work-tree"]).output();
+    let (is_git, dubious) = match &probe {
+        Ok(o) => (o.status.success() && String::from_utf8_lossy(&o.stdout).trim() == "true", String::from_utf8_lossy(&o.stderr).contains("dubious ownership")),
+        Err(_) => (false, false),
+    };
     let files: Vec<String> = if is_git {
         git(root, &["ls-files"]).unwrap_or_default().lines().map(String::from).collect()
-    } else { let mut v = vec![]; walk(root, root, &mut v); v };
+    } else { let mut v = vec![]; walk(root, root, &mut v, 0); v };
     let lower: Vec<String> = files.iter().map(|f| f.to_lowercase()).collect();
-    let mut texts: Vec<(String, String)> = vec![];
-    let mut big = false;
+    // (lowercase path, original path, contents); symlinks skipped, total read budget capped
+    let mut texts: Vec<(String, String, String)> = vec![];
+    let (mut big, mut budget) = (false, 64_000_000u64);
     for f in &files {
-        let Ok(m) = fs::metadata(root.join(f)) else { continue };
+        let path = root.join(f);
+        let Ok(m) = fs::symlink_metadata(&path) else { continue };
+        if !m.is_file() { continue; }
         if m.len() > 5_000_000 { big = true; }
-        if m.len() <= 200_000 { if let Ok(t) = fs::read_to_string(root.join(f)) { texts.push((f.to_lowercase(), t)); } }
+        let cap = if !f.contains('/') && f.to_lowercase().starts_with("readme") { 1_000_000 } else { 200_000 };
+        if m.len() <= cap && m.len() <= budget {
+            if let Ok(t) = fs::read_to_string(&path) { budget -= m.len(); texts.push((f.to_lowercase(), f.clone(), t)); }
+        }
     }
     let any = |f: &dyn Fn(&str) -> bool| lower.iter().any(|p| f(p));
-    let readme = texts.iter().find(|(p, _)| p.starts_with("readme") && !p.contains('/')).map(|(_, t)| t.as_str()).unwrap_or("");
+    let readme = texts.iter().find(|(p, _, _)| p.starts_with("readme") && !p.contains('/')).map(|t| t.2.as_str()).unwrap_or("");
     let rl = readme.to_lowercase();
-    let wf = |t: &str| texts.iter().any(|(p, c)| p.starts_with(".github/workflows/") && c.to_lowercase().contains(t));
-    let ci = any(&|p| p.starts_with(".github/workflows/")) || any(&|p| p == ".gitlab-ci.yml");
-    let test_files = texts.iter().filter(|(p, c)| p.contains("test") || p.contains("spec") || c.contains("#[test]") || c.contains("def test_")).count();
-    let log = if is_git { git(root, &["log", "--format=%ct%x09%s"]).unwrap_or_default() } else { String::new() };
+    let ci_file = |p: &str| p.starts_with(".github/workflows/") || p == ".gitlab-ci.yml";
+    let ci = any(&|p| ci_file(p));
+    let ci_tests = texts.iter().any(|(p, _, c)| ci_file(p) && runs_tests(c));
+    let test_files = lower.iter().filter(|p| is_test_path(p)).count()
+        + texts.iter().filter(|(p, _, c)| !is_test_path(p) && ((p.ends_with(".rs") && c.contains("#[test]")) || (p.ends_with(".py") && c.contains("def test_")))).count();
+    let log = if is_git { git(root, &["log", "--format=%ct%x09%s", "--", "."]).unwrap_or_default() } else { String::new() };
     let commits: Vec<(i64, &str)> = log.lines().filter_map(|l| l.split_once('\t')).filter_map(|(t, s)| Some((t.parse().ok()?, s))).collect();
     let span = commits.iter().map(|c| c.0).max().unwrap_or(0) - commits.iter().map(|c| c.0).min().unwrap_or(0);
     let lazy = ["update", "fix", "changes", "commit", "wip", "test", "asdf", "."];
     let good = commits.iter().filter(|(_, s)| s.split_whitespace().count() >= 3 && !lazy.contains(&s.trim().to_lowercase().as_str())).count();
     let tags = if is_git { git(root, &["tag"]).unwrap_or_default().lines().count() } else { 0 };
     let junk = any(&|p| p.starts_with("target/") || p.contains("node_modules/") || p.contains("__pycache__/") || p.ends_with(".ds_store") || p.ends_with(".pyc") || p == ".env");
-    let pk = ["-----", "BEGIN"].concat();
-    let key = texts.iter().any(|(_, t)| t.contains(&pk) && t.contains(&["PRIVATE", " KEY"].concat()));
-    let tok = texts.iter().any(|(_, t)| after(t, "AKIA", 16, |c| c.is_ascii_uppercase() || c.is_ascii_digit()) || after(t, "ghp_", 30, |c| c.is_ascii_alphanumeric()));
+    let (pk, pk2) = (["-----", "BEGIN"].concat(), ["PRIVATE", " KEY"].concat());
+    let key_file = texts.iter().find(|(_, _, t)| t.contains(&pk) && t.contains(&pk2)).map(|t| t.1.clone());
+    let tok_file = texts.iter().find(|(_, _, t)| after(t, "AKIA", 16, |c| c.is_ascii_uppercase() || c.is_ascii_digit()) || after(t, "ghp_", 30, |c| c.is_ascii_alphanumeric())).map(|t| t.1.clone());
+    let kmsg = format!("Private key committed in {}: remove it and rotate it", key_file.clone().unwrap_or_default());
+    let tmsg = format!("Token pattern committed in {}: revoke it and purge history", tok_file.clone().unwrap_or_default());
     let mut c = vec![];
-    let mut add = |cat, pts, ok, fix| c.push(Check { cat, pts, ok, fix });
+    let mut add = |cat: usize, pts: u32, ok: bool, fix: &str| c.push(Check { cat, pts, ok, fix: fix.to_string() });
     add(0, 30, !readme.is_empty(), "Add a README.md");
     add(0, 20, readme.len() >= 1500, "Expand the README: what it does, why it exists, how to run it");
     add(0, 15, readme.lines().filter(|l| l.starts_with('#')).count() >= 3, "Structure the README with at least 3 headings");
@@ -75,7 +108,7 @@ fn audit(root: &Path) -> (Vec<Check>, bool) {
     add(0, 10, ["install", "usage", "getting started", "cargo run", "npm "].iter().any(|k| rl.contains(k)), "Add an Install/Usage section");
     add(1, 40, test_files > 0, "Add automated tests");
     add(1, 20, test_files >= 3, "Cover more modules: aim for 3+ test files");
-    add(1, 40, wf("test"), "Run the test suite in CI (GitHub Actions)");
+    add(1, 40, ci_tests, "Run the test suite in CI (GitHub Actions)");
     add(2, 25, any(&|p| p.starts_with("license") || p.starts_with("copying")), "Add a LICENSE file");
     add(2, 20, any(&|p| p == ".gitignore"), "Add a .gitignore");
     add(2, 15, any(&|p| ["cargo.toml", "package.json", "pyproject.toml", "go.mod", "requirements.txt", "pom.xml", "build.gradle"].contains(&p)), "Add a dependency manifest");
@@ -86,15 +119,15 @@ fn audit(root: &Path) -> (Vec<Check>, bool) {
     add(3, 10, commits.len() >= 30, "Keep committing in small steps: 30+ commits");
     add(3, 20, span >= 14 * 86400, "History should span 2+ weeks of work, not one dump");
     add(3, 30, !commits.is_empty() && good * 10 >= commits.len() * 7, "Write descriptive commit messages (3+ words, not 'update'/'fix')");
-    add(4, 40, !key, "A private key is committed: remove it and rotate it");
-    add(4, 40, !tok, "A cloud/API token pattern is committed: revoke it and purge history");
+    add(4, 40, key_file.is_none(), &kmsg);
+    add(4, 40, tok_file.is_none(), &tmsg);
     add(4, 20, !any(&|p| p == ".env" || p.ends_with("/.env")), ".env is tracked: untrack it");
     add(5, 30, ci, "Add CI (.github/workflows)");
     add(5, 15, any(&|p| p.starts_with("changelog") || p.starts_with("contributing")), "Add CHANGELOG or CONTRIBUTING");
     add(5, 15, rl.contains("shields.io") || rl.contains("badge"), "Add status badges to the README");
     add(5, 15, any(&|p| p.starts_with("assets/") || p.starts_with("docs/") || p.ends_with(".png") || p.ends_with(".gif")), "Add visual assets (assets/ or docs/)");
     add(5, 25, tags > 0, "Tag a release: git tag v0.1.0");
-    (c, is_git)
+    (c, is_git, dubious)
 }
 
 #[cfg(windows)]
@@ -188,7 +221,7 @@ fn sheet(name: &str, sc: &[u32; 6], shown: f32, overall: u32, on: bool, t: f32) 
 fn svg(name: &str, sc: &[u32; 6], overall: u32) -> String {
     let tr = tier(overall);
     let hex = |c: [u8; 3]| format!("#{:02x}{:02x}{:02x}", c[0], c[1], c[2]);
-    let esc = name.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;");
+    let esc = name.replace('&', "&amp;").replace('"', "&quot;").replace('<', "&lt;").replace('>', "&gt;");
     let mut s = format!("<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 560 300\" font-family=\"monospace\" shape-rendering=\"crispEdges\"><defs><radialGradient id=\"g\"><stop offset=\"0\" stop-color=\"{}\" stop-opacity=\".5\"/><stop offset=\"1\" stop-color=\"{}\" stop-opacity=\"0\"/></radialGradient></defs><rect width=\"560\" height=\"300\" rx=\"10\" fill=\"#0f0e1a\"/><rect x=\"6\" y=\"6\" width=\"548\" height=\"288\" rx=\"6\" fill=\"none\" stroke=\"{}\" stroke-width=\"2\"/>", hex(PAL[tr].0), hex(PAL[tr].0), hex(PAL[tr].0));
     s += "<circle cx=\"90\" cy=\"150\" r=\"90\" fill=\"url(#g)\"/>";
     for (y, row) in sprite(tr).iter().enumerate() { for (x, p) in row.iter().enumerate() {
@@ -203,33 +236,59 @@ fn svg(name: &str, sc: &[u32; 6], overall: u32) -> String {
     s + &format!("<text x=\"180\" y=\"284\" font-size=\"12\" fill=\"#6d6a90\">questlog  overall {}/100</text></svg>", overall)
 }
 
+const USAGE: &str = "usage: questlog [path] [--svg out.svg] [--min-score 0-100] [--no-anim] [--version]";
+
+struct Opts { path: String, svg: Option<String>, min: Option<u32>, anim: bool }
+
+fn parse(args: &[String]) -> Result<Opts, String> {
+    let mut o = Opts { path: ".".into(), svg: None, min: None, anim: true };
+    let (mut i, mut got_path) = (0, false);
+    while i < args.len() {
+        match args[i].as_str() {
+            "--svg" => { i += 1; o.svg = Some(args.get(i).ok_or("--svg needs a file path")?.clone()); }
+            "--min-score" => {
+                i += 1;
+                let v = args.get(i).ok_or("--min-score needs a number")?;
+                let n: u32 = v.parse().map_err(|_| format!("--min-score expects a number from 0 to 100, got '{v}'"))?;
+                if n > 100 { return Err(format!("--min-score expects 0 to 100, got {n}")); }
+                o.min = Some(n);
+            }
+            "--no-anim" => o.anim = false,
+            a if a.starts_with('-') => return Err(format!("unknown option: {a}")),
+            a => { if got_path { return Err("only one path is allowed".into()); } o.path = a.into(); got_path = true; }
+        }
+        i += 1;
+    }
+    Ok(o)
+}
+
 fn main() {
     enable_vt();
     let args: Vec<String> = env::args().skip(1).collect();
+    if args.iter().any(|a| a == "-h" || a == "--help") { println!("questlog {} - repo audit as a pixel-RPG sheet\n\n{USAGE}", env!("CARGO_PKG_VERSION")); return; }
     if args.iter().any(|a| a == "--version" || a == "-V") { println!("questlog {}", env!("CARGO_PKG_VERSION")); return; }
-    let opt = |k: &str| args.iter().position(|a| a == k).and_then(|i| args.get(i + 1)).cloned();
-    if args.iter().any(|a| a == "-h" || a == "--help") { println!("questlog {} - repo audit as a pixel-RPG sheet\n\nusage: questlog [path] [--svg out.svg] [--min-score N] [--no-anim] [--version]", env!("CARGO_PKG_VERSION")); return; }
-    let path = args.iter().enumerate().find(|(i, a)| !a.starts_with("--") && (*i == 0 || !args[i - 1].starts_with("--") || args[i - 1] == "--no-anim")).map_or(".".to_string(), |(_, a)| a.clone());
-    let root = Path::new(&path);
-    if !root.is_dir() { eprintln!("not a directory: {path}"); exit(2); }
-    let (checks, is_git) = audit(root);
+    let o = match parse(&args) { Ok(o) => o, Err(e) => { eprintln!("error: {e}\n{USAGE}"); exit(2); } };
+    let root = Path::new(&o.path);
+    if !root.is_dir() { eprintln!("error: not a directory: {}", o.path); exit(2); }
+    if Command::new("git").arg("--version").output().is_err() { eprintln!("error: questlog needs git on PATH: https://git-scm.com/downloads"); exit(2); }
+    let (checks, is_git, dubious) = audit(root);
     let mut sc = [0u32; 6];
     for c in checks.iter().filter(|c| c.ok) { sc[c.cat] += c.pts; }
     let overall = sc.iter().sum::<u32>() / 6;
-    let name = fs::canonicalize(root).ok().and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned())).unwrap_or(path.clone());
-    let tty = std::io::stdout().is_terminal();
-    let on = tty;
-    if git(root, &["--version"]).is_none() && Command::new("git").arg("--version").output().is_err() { eprintln!("questlog needs git on PATH: https://git-scm.com/downloads"); exit(2); }
+    let raw = fs::canonicalize(root).ok().and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned())).unwrap_or_else(|| o.path.clone());
+    let clean: String = raw.chars().filter(|c| !c.is_control()).collect();
+    let name = if clean.is_empty() { "repo".to_string() } else if clean.chars().count() > 24 { format!("{}…", clean.chars().take(23).collect::<String>()) } else { clean };
+    let narrow = env::var("COLUMNS").ok().and_then(|c| c.parse::<u32>().ok()).map_or(false, |c| c < 62);
+    let on = std::io::stdout().is_terminal() && !narrow && env::var_os("NO_COLOR").is_none() && env::var("TERM").map_or(true, |t| t != "dumb");
     println!();
     for l in banner(on) { println!("{l}"); }
     println!();
-    if on && !args.iter().any(|a| a == "--no-anim") {
+    if on && o.anim {
         let mut out = std::io::stdout();
         for f in 0..=24 {
             let k = 1.0 - (1.0 - f as f32 / 24.0).powi(3);
-            let lines = sheet(&name, &sc, k, overall, on, f as f32 / 12.0);
             if f > 0 { print!("\x1b[12A"); }
-            for l in &lines { println!("{l}\x1b[K"); }
+            for l in &sheet(&name, &sc, k, overall, on, f as f32 / 12.0) { println!("{l}\x1b[K"); }
             out.flush().ok();
             sleep(Duration::from_millis(28));
         }
@@ -242,15 +301,24 @@ fn main() {
     println!("\n{}", rgb([255, 214, 110], "QUESTS  (ranked by score gain)", on));
     if q.is_empty() { println!("  none left. Ship it."); }
     for c in q.iter().take(7) { println!("  +{:<2} XP  [{}] {}", (c.pts as f32 / 6.0).round().max(1.0) as u32, CATS[c.cat], c.fix); }
-    if !is_git { println!("\n  note: not a git repo, so history can't be scored."); }
+    if dubious { println!("\n  note: git refuses this folder (owned by another user). Run: git config --global --add safe.directory <path>"); }
+    else if !is_git { println!("\n  note: not a git repo, so history can't be scored."); }
     println!("\n  clear every quest: {overall} -> {potential}/100");
-    if let Some(p) = opt("--svg") { fs::write(&p, svg(&name, &sc, overall)).expect("write svg"); println!("  card written: {p}"); }
-    if let Some(m) = opt("--min-score").and_then(|m| m.parse::<u32>().ok()) { if overall < m { eprintln!("score {overall} < required {m}"); exit(1); } }
+    if let Some(p) = &o.svg {
+        match fs::write(p, svg(&name, &sc, overall)) { Ok(_) => println!("  card written: {p}"), Err(e) => { eprintln!("error: cannot write {p}: {e}"); exit(2); } }
+    }
+    if let Some(m) = o.min { if overall < m { eprintln!("score {overall} is below required {m}"); exit(1); } }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn sv(a: &[&str]) -> Vec<String> { a.iter().map(|s| s.to_string()).collect() }
+    fn temp(tag: &str) -> std::path::PathBuf {
+        let d = env::temp_dir().join(format!("questlog-{tag}-{}-{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+        fs::create_dir_all(&d).unwrap();
+        d
+    }
     #[test] fn ranks_map_to_tiers() { assert_eq!(tier(0), 0); assert_eq!(tier(59), 2); assert_eq!(tier(60), 3); assert_eq!(tier(100), 5); }
     #[test] fn token_scanner_needs_full_length() {
         let full = ["k=AKI", "AABCDEFGHIJKLMNOP"].concat();
@@ -258,7 +326,50 @@ mod tests {
         assert!(!after("AKIA short", "AKIA", 16, |c| c.is_ascii_uppercase()));
     }
     #[test] fn check_points_sum_to_100_per_category() {
-        let (c, _) = audit(Path::new("."));
+        let (c, _, _) = audit(Path::new("."));
         for i in 0..6 { assert_eq!(c.iter().filter(|x| x.cat == i).map(|x| x.pts).sum::<u32>(), 100, "{}", CATS[i]); }
+    }
+    #[test] fn test_path_detection_avoids_lookalikes() {
+        for p in ["tests/a.rs", "src/__tests__/x.js", "app.test.js", "pkg/test_util.py", "x/foo_test.go"] { assert!(is_test_path(p), "{p}"); }
+        for p in ["docs/latest.md", "src/inspect.rs", "contest.py", "specification.md", "src/attest.rs"] { assert!(!is_test_path(p), "{p}"); }
+    }
+    #[test] fn ci_test_detection_is_specific() {
+        assert!(runs_tests("run: cargo test --all"));
+        assert!(runs_tests("run: npm test"));
+        assert!(!runs_tests("uses: actions/checkout@latest\nrun: echo hello"));
+    }
+    #[test] fn args_are_strictly_validated() {
+        assert!(parse(&sv(&["--min-score", "abc"])).is_err());
+        assert!(parse(&sv(&["--min-score", "101"])).is_err());
+        assert!(parse(&sv(&["--min-score"])).is_err());
+        assert!(parse(&sv(&["--svg"])).is_err());
+        assert!(parse(&sv(&["--bogus"])).is_err());
+        assert!(parse(&sv(&["a", "b"])).is_err());
+        let o = parse(&sv(&["../x", "--svg", "c.svg", "--min-score", "70", "--no-anim"])).unwrap();
+        assert_eq!((o.path.as_str(), o.svg.as_deref(), o.min, o.anim), ("../x", Some("c.svg"), Some(70), false));
+    }
+    #[test] fn committed_secret_is_detected_and_named() {
+        if Command::new("git").arg("--version").output().is_err() { return; }
+        let d = temp("leak");
+        let run = |a: &[&str]| Command::new("git").arg("-C").arg(&d).args(a).output().unwrap();
+        run(&["init", "-q"]);
+        fs::write(d.join("leak.py"), format!("k='{}{}'", "AKIA", "ABCDEFGHIJKLMNOP")).unwrap();
+        run(&["add", "."]);
+        run(&["-c", "user.name=t", "-c", "user.email=t@example.invalid", "commit", "-qm", "add leaked token file"]);
+        let (c, is_git, _) = audit(&d);
+        assert!(is_git);
+        assert!(c.iter().any(|x| x.cat == 4 && !x.ok && x.fix.contains("leak.py")));
+        fs::remove_dir_all(&d).ok();
+    }
+    #[cfg(unix)]
+    #[test] fn symlinks_are_never_followed() {
+        let d = temp("link");
+        fs::write(d.join("real.txt"), "x").unwrap();
+        std::os::unix::fs::symlink("/etc", d.join("etc-link")).unwrap();
+        std::os::unix::fs::symlink(&d, d.join("loop")).unwrap();
+        let mut v = vec![];
+        walk(&d, &d, &mut v, 0);
+        assert_eq!(v, vec!["real.txt".to_string()]);
+        fs::remove_dir_all(&d).ok();
     }
 }
